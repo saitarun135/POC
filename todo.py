@@ -4,9 +4,8 @@ from auth import Auth
 from connection import connector
 from sqlalchemy.orm import Session
 from requests.create_todo_request import CreateToDoRequest
-from models.todo_model import ToDoModel
-from models.user_todo_link_model import UserToDOsLink
 from datetime import datetime
+from services.todo_service import ToDoService
 
 
 todo_router = APIRouter()
@@ -15,14 +14,7 @@ con = Annotated[Session, Depends(connector)]
 
 @todo_router.post('/create')
 async def create_to_do(id:auth_usr, req:CreateToDoRequest, db:con):
-    todo = ToDoModel(
-            title = req.title,
-            description = req.description,
-            created_by = id
-        )
-    db.add(todo)
-    db.commit()
-    
+    todo = await ToDoService(db, id).create_to_do(req.title, req.description)
     return {
         "success" : True,
         "message" : "Created Successfully.",
@@ -30,25 +22,17 @@ async def create_to_do(id:auth_usr, req:CreateToDoRequest, db:con):
     }
 
 @todo_router.patch('/share-with/{from_todo_id}/{to_user_id}')
-async def share_with(from_todo_id:int, to_user_id:int, db:con):
-    alreadyShared = db.query(UserToDOsLink).filter(UserToDOsLink.todo_id == from_todo_id, UserToDOsLink.user_id == to_user_id).first()
-    
+async def share_with(from_todo_id:int, to_user_id:int, id:auth_usr, db:con):
+    alreadyShared = ToDoService(db, id).already_collabarated_with_user(from_todo_id, to_user_id)
     if alreadyShared:
         alreadyShared.status = 0
         alreadyShared.commit()
-        
         return {
             "success" : True,
             "message" : "To DO shared successfully."
         }
     
-    link = UserToDOsLink(
-        user_id = to_user_id,
-        todo_id = from_todo_id
-    )
-    
-    db.add(link)
-    db.commit()
+    await ToDoService(db, id).collabarate_with_user(to_user_id, from_todo_id)
     return {
         "success" : True,
         "message" : "To DO shared successfully."
@@ -56,7 +40,7 @@ async def share_with(from_todo_id:int, to_user_id:int, db:con):
     
 @todo_router.patch('/remove-user/{from_todo_id}/{to_user_id}')
 async def remove_user(from_todo_id:int, to_user_id:int, id:auth_usr, db:con):
-    fromToDO = db.query(ToDoModel).filter(ToDoModel.id == from_todo_id).first()
+    fromToDO = ToDoService(db, id).find_todo(from_todo_id)
     if not fromToDO:
         return {
             "success": False,
@@ -69,18 +53,17 @@ async def remove_user(from_todo_id:int, to_user_id:int, id:auth_usr, db:con):
         }
     
     
-    link = db.query(UserToDOsLink).filter(UserToDOsLink.user_id == to_user_id, UserToDOsLink.todo_id == from_todo_id, UserToDOsLink.status == 0).first()
-    link.status =0
-    link.commit()
+    link = ToDoService(db,id).unlink_user(to_user_id, from_todo_id)
     
     return {
         "success" : True,
-        "message" : "Successfully removed user."
+        "message" : "Successfully removed user.",
+        "link_status": link
     }
     
 @todo_router.delete('/delete/{to_do_id}')
 async def delete(id:auth_usr, db:con, to_do_id:int=Path(gt=0)):
-    toDo = db.query(ToDoModel).filter(ToDoModel.id == to_do_id, ToDoModel.status == 0).first()
+    toDo = ToDoService(db, id).find_todo(to_do_id)
     
     if not toDo:
         return {
