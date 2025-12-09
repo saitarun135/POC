@@ -1,14 +1,13 @@
-from fastapi import APIRouter,Depends,HTTPException
+from fastapi import APIRouter,Depends
 from connection import connector
 from typing import Annotated
 from sqlalchemy.orm import Session
 from requests.user_register import Register
 from requests.login_request import Login
 from requests.update_email_request import UpdateEmail
-from models.user_model import User
-from sqlalchemy import or_
 from auth import Auth
 from datetime import datetime
+from services.user_service import UserService
 
 user_router = APIRouter()
 
@@ -17,18 +16,7 @@ auth_user_id = Annotated[int, Depends(Auth().id)]
 
 @user_router.post('/register-user')
 async def register_user(req:Register, db:con):
-    if db.query(User).filter(
-        or_(User.email == req.email, User.user_name == req.user_name)
-    ).first():
-        return HTTPException(detail="Email or User name already taken", status_code= 403)
-    
-    user = User(
-        user_name=req.user_name,
-        password=req.password,
-        email = req.email
-    )
-    db.add(user)
-    db.commit()
+    user = await UserService(db).register_user(req.email, req.user_name, req.password)
     return {
         "success": True,
         "message": "User registration completed successfully.",
@@ -37,16 +25,12 @@ async def register_user(req:Register, db:con):
     
 @user_router.post('/login')
 async def login(req:Login, db:con):
-    user = db.query(User).filter(
-        User.user_name == req.user_name,
-        User.password == req.password
-    ).first()
-
+    user = await UserService(db).login(req.user_name, req.password)
     if user is None:
         return {"success":False, "message":"Invalid credentials"}
     
     payload = {
-        "user_name" : req.user_name,
+        "user_name" : user.user_name,
         "email":user.email,
         "id":user.id
     }
@@ -62,7 +46,7 @@ async def login(req:Login, db:con):
     
 @user_router.patch('/update-user-email')
 async def update_user_email(id:auth_user_id ,req:UpdateEmail, db:con):
-    user = User.active(db).filter(User.id==id).first()
+    user = await UserService(db).find_user(id)
     if user is None:
         return {
             "success" : False,
@@ -80,7 +64,7 @@ async def update_user_email(id:auth_user_id ,req:UpdateEmail, db:con):
     
 @user_router.delete('/deactivate-account')
 async def deactivate_account(id:auth_user_id, db:con):
-    user = db.query(User).filter(User.id==id).first()
+    user = await UserService(db).find_user(id)
     user.status = 1
     user.updated_at = datetime.now()
     db.commit()
